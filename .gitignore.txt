@@ -1,0 +1,8 @@
+env/
+data/
+output/
+__pycache__/
+*.tar.gz
+*.zip
+*.pyc
+.DS_Store
