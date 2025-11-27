@@ -955,6 +955,69 @@ if __name__ == "__main__":
             'market_perc': 100.0
         }
         summary = pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
+        # ============================
+        #   CLEAN SUMMARY FOR RESULTS
+        # ============================
+
+        # 1. Compute number of traded days per underlying
+         #    (count unique dates present in perf)
+        if not perf.empty:
+            traded_days = (
+               perf.groupby("UNDERLYING")["date"]
+               .nunique()
+               .reset_index()
+               .rename(columns={"date": "n_traded_days"})
+            )
+            summary = summary.merge(traded_days, on="UNDERLYING", how="left")
+        else:
+             summary["n_traded_days"] = 0
+
+       # 2. Define required columns
+        required_cols = [
+             "UNDERLYING",
+             "n_traded_days",
+             "final_net_pnl",
+             "final_gross_pnl",
+             "final_cost_pnl",
+             "final_spr_slpg1",
+             "final_spr_slpg2",
+             "total_contracts_traded",
+             "total_shares_traded",
+             "max_delta_lots",
+             "min_delta_lots",
+            "max_drawdown",
+             "market_perc"
+            ]
+
+# Ensure missing columns exist (avoids key errors)
+        for col in required_cols:
+            if col not in summary.columns:
+                summary[col] = 0
+        summary_clean = summary[required_cols].copy()
+
+       # 3. Rename to assignment-required names
+        summary_clean = summary_clean.rename(columns={
+            "UNDERLYING": "stock_name",
+            "final_net_pnl": "net_pnl",
+            "final_gross_pnl": "gross_pnl",
+            "final_cost_pnl": "cost_pnl",
+            "final_spr_slpg1": "slippage_fut1",
+            "final_spr_slpg2": "slippage_fut2",
+            "total_contracts_traded": "total_lots_traded",
+            "total_shares_traded": "total_volume",
+            "max_delta_lots": "max_gross_qty",
+            "min_delta_lots": "max_delta_qty",
+            "max_drawdown": "drawdown"
+        })
+
+# 4. Sort by descending net_pnl (required)
+        summary_clean = summary_clean.sort_values("net_pnl", ascending=False)
+
+# 5. Save final results CSV
+        out_path = os.path.join(args.result_folder, "results.csv")
+        summary_clean.to_csv(out_path, index=False)
+
+        print(f"[OK] Saved cleaned results → {out_path}")
 
     else:
         perf = pd.DataFrame()
@@ -997,7 +1060,7 @@ if __name__ == "__main__":
     perf.to_csv(os.path.join(args.result_folder, f"{args.prefix}_perminute_{tag}.csv"), index=False)
     trades.to_csv(os.path.join(args.result_folder, f"{args.prefix}_trades_{tag}.csv"), index=False)
     summary.to_csv(os.path.join(args.result_folder, f"{args.prefix}_summary_{tag}.csv"), index=False)
-
+    
     print(f"[OK] Saved results for {tag} in {args.result_folder}")
 
 
