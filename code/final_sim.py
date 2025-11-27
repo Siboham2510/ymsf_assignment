@@ -441,24 +441,26 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
             s1   = row['spread_FUT1']
             f2   = row['mid_FUT2']
             s2   = row['spread_FUT2']
-                # compute days to expiry for FUT1
-            exp_year = row['exp_year_FUT1']
-            exp_month = row['exp_month_FUT1']
-            # assume last calendar day of expiry month as expiry (simple + OK for NIFTY/BANKNIFTY)
-            expiry_date = pd.Timestamp(year=exp_year, month=exp_month, day=28) + pd.offsets.MonthEnd(0)
-            days_to_expiry = (expiry_date - ts.normalize()).days
-
             cash = row['cash_ltp']
             z    = row['z']; sma = row['sma']; sd = row['sd']
-
             gmean = row['global_mean']
             gsd   = row['global_sd']
-
             ttq_spd = row[f'ttq_SPD_{_min}']
 
             ttq_spd_sma = row[f'ttq_SPD_{_min}_sma']
             ttq_spd_sd = row[f'ttq_SPD_{_min}_sd']
 
+            # --- dynamic thresholds based on days_to_expiry ---
+            dte = days_to_expiry(ts, row['name_FUT1'])
+
+            try:
+                dte_int = int(dte)
+            except Exception:
+                dte_int = 30
+            entry_E, tp_off, stop_off = adjust_thresholds(dte_int)
+            local_params = RelZParams(
+                entry=entry_E, tp_off=tp_off, stop_off=stop_off
+            )
 
             try:
                 shares_per_lot = shares_per_lot_dict[under]
@@ -541,7 +543,9 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
                     'ttq_FUT2': row.get('ttq_FUT2', np.nan),
                     'entry_E': zparams.entry, 
                     'tp_off': zparams.tp_off, 
-                    'stop_off': zparams.stop_off
+                    'stop_off': zparams.stop_off,
+                    'days_to_expiry': dte_int
+
                 })
                 continue
             # ===== END FORCE CLOSE =====
@@ -558,23 +562,23 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
 
             ready = (ts >= start_trade_ts) and (ts.time() >= start_time and ts.time() <= end_time)
 
-            if s1 <= 0 or s2 <= 0:
+            if s1 <= 0 or s2 <= 0: #Liquidity/bad quotes
                 continue
 
             spread_cost = abs(s1/2 + s2/2) * shares_per_lot
-            # delta, tag = decide_delta_relative(z, zmul, cost * lot_notional * 2, spread_cost, lots, ready, zparams)
+            delta, tag = decide_delta_relative(z, zmul, cost * lot_notional * 2, spread_cost, lots, ready, local_params)
                 # dynamic z-parameters based on expiry proximity
-            entry_E, tp_dyn, sl_dyn = adjust_thresholds(days_to_expiry)
-            zparams_dyn = RelZParams(entry=entry_E, tp_off=tp_dyn, stop_off=sl_dyn)
+            # entry_E, tp_dyn, sl_dyn = adjust_thresholds(days_to_expiry)
+            # zparams_dyn = RelZParams(entry=entry_E, tp_off=tp_dyn, stop_off=sl_dyn)
 
-            delta, tag = decide_delta_relative(
-            z, zmul,
-            cost * lot_notional * 2,
-            spread_cost,
-            lots,
-            ready,
-            zparams_dyn
-            )
+            # delta, tag = decide_delta_relative(
+            # z, zmul,
+            # cost * lot_notional * 2,
+            # spread_cost,
+            # lots,
+            # ready,
+            # zparams_dyn
+            # )
 
 
             # Throttle and bounds
@@ -637,7 +641,8 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
                     'FUT2': row['name_FUT2'],
                     'entry_E': zparams.entry, 
                     'tp_off': zparams.tp_off, 
-                    'stop_off': zparams.stop_off
+                    'stop_off': zparams.stop_off,
+                    'days_to_expiry': dte_int
                 })
                 lots = lots_new
                 curr_value = lots * shares_per_lot * spr
@@ -664,6 +669,10 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
                 'spr_slpg_pnl2': spr_slpg_pnl2,
                 'own_amount': own_amount,
                 'ttq_FUT2': row.get('ttq_FUT2', np.nan)  # cumulative contracts at this ts
+                'entry_E': entry_E,
+                'tp_off': tp_off,
+                'stop_off': stop_off,
+                'days_to_expiry': dte_int
             })
 
         results.append(pd.DataFrame(rows))
@@ -862,8 +871,7 @@ def run_sim_grid(folder: str,
 # ==== CLI driver (single-config run) =========================================
 if __name__ == "__main__":
     import argparse, os
-
-    parser = argparse.ArgumentParser(description="Mean-reversion spread sim (single zparam run).")
+    parser = argparse.ArgumentParser(description="Mean-reversion spread simulation with dynamic thresholds vs near future days-to expiry .")
     # parser.add_argument("--entry", type=float, required=True, help="Entry z threshold E (e.g., 1.5)")
     # parser.add_argument("--tp_off", type=float, required=True, help="TP offset from entry (e.g., 0.5)")
     # parser.add_argument("--stop_off", type=float, required=True, help="STOP offset from entry (e.g., 2.0)")
@@ -872,7 +880,7 @@ if __name__ == "__main__":
     # Optional knobs (keep defaults from your script):
     parser.add_argument("--lot_notional", type=float, default=800000.0)
     parser.add_argument("--max_lots", type=int, default=40)
-    parser.add_argument("--prefix", type=str, default="mr_spread_rel")
+    parser.add_argument("--prefix", type=str, default="mr_spread_dynamic")
     parser.add_argument("--ncores", type=int, default=4)
     parser.add_argument("--underlying", type=str, default="")
     parser.add_argument("--window", type=int, default=1)
@@ -903,15 +911,14 @@ if __name__ == "__main__":
     tdiff  = datetime.datetime.now() - tp
     print(tdiff, "uni done")
 
-    # === Sim run for this single zparam config ===
-    # zp = RelZParams(entry=args.entry, tp_off=args.tp_off, stop_off=args.stop_off)
-
+    # Dummy zparams (we don't use these, actual values are dynamic per row) Keeping this in order to not have to change function signature
+    zp = RelZParams(entry=1.5, tp_off=0.5, stop_off=1.5)
     groups = [(under, g) for under, g in uni.groupby('underlying')]
 
     results = []
     with ProcessPoolExecutor(max_workers=args.ncores) as ex:
         futures = {ex.submit(simulate_mean_reversion, group=g, zparams=zp, lot_notional_fixed=args.lot_notional, max_lots=args.max_lots): g for g in groups}
-        for fut in tqdm(as_completed(futures), total=len(futures), desc=f"Simulation Per Underlying {zp}"):
+        for fut in tqdm(as_completed(futures), total=len(futures), desc=f"Simulation Per Underlying (Dynamic) {zp}"):
             results.append(fut.result())
 
     # --- concatenate outputs ---
@@ -955,32 +962,32 @@ if __name__ == "__main__":
     tdiff  = datetime.datetime.now() - tp
     print(tdiff, "simulation done")
     # stamp parameters (redundant if you already stamp inside simulate)
-    for df in (perf, summary, trades):
-        df["entry_E"] = args.entry
-        df["tp_off"] = args.tp_off
-        df["stop_off"] = args.stop_off
+    # for df in (perf, summary, trades):
+    #     df["entry_E"] = args.entry
+    #     df["tp_off"] = args.tp_off
+    #     df["stop_off"] = args.stop_off
 
     # Add TOTAL row (you already built this earlier; if not, do it here)
     # -- if you already add TOTAL row in summary upstream, skip this block --
-    if "UNDERLYING" in summary.columns and "TOTAL" not in summary["UNDERLYING"].values:
-        total_row = {
-            'UNDERLYING': 'TOTAL',
-            'start': summary['start'].min() if 'start' in summary else pd.NaT,
-            'end': summary['end'].max() if 'end' in summary else pd.NaT,
-            'final_realized': summary.get('final_realized', pd.Series([0])).sum(),
-            'final_unrealized': summary.get('final_unrealized', pd.Series([0])).sum(),
-            'final_equity': summary.get('final_equity', pd.Series([0])).sum(),
-            'max_drawdown': summary.get('max_drawdown', pd.Series([0])).max(),
-            'total_contracts_traded': summary.get('total_contracts_traded', pd.Series([0])).sum(),
-            'total_shares_traded': summary.get('total_shares_traded', pd.Series([0])).sum(),
-            'max_delta_lots': summary.get('max_delta_lots', pd.Series([0])).max(),
-            'min_delta_lots': summary.get('min_delta_lots', pd.Series([0])).min(),
-            'entry_E': args.entry, 'tp_off': args.tp_off, 'stop_off': args.stop_off
-        }
-        summary = pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
+    # if "UNDERLYING" in summary.columns and "TOTAL" not in summary["UNDERLYING"].values:
+    #     total_row = {
+    #         'UNDERLYING': 'TOTAL',
+    #         'start': summary['start'].min() if 'start' in summary else pd.NaT,
+    #         'end': summary['end'].max() if 'end' in summary else pd.NaT,
+    #         'final_realized': summary.get('final_realized', pd.Series([0])).sum(),
+    #         'final_unrealized': summary.get('final_unrealized', pd.Series([0])).sum(),
+    #         'final_equity': summary.get('final_equity', pd.Series([0])).sum(),
+    #         'max_drawdown': summary.get('max_drawdown', pd.Series([0])).max(),
+    #         'total_contracts_traded': summary.get('total_contracts_traded', pd.Series([0])).sum(),
+    #         'total_shares_traded': summary.get('total_shares_traded', pd.Series([0])).sum(),
+    #         'max_delta_lots': summary.get('max_delta_lots', pd.Series([0])).max(),
+    #         'min_delta_lots': summary.get('min_delta_lots', pd.Series([0])).min(),
+    #         'entry_E': args.entry, 'tp_off': args.tp_off, 'stop_off': args.stop_off
+    #     }
+    #     summary = pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
 
     # === Save with parameterized filenames ===
-    tag = f"E{args.entry}_TP{args.tp_off}_SL{args.stop_off}"
+    tag = "dynamic"
     perf.to_csv(os.path.join(args.result_folder, f"{args.prefix}_perminute_{tag}.csv"), index=False)
     trades.to_csv(os.path.join(args.result_folder, f"{args.prefix}_trades_{tag}.csv"), index=False)
     summary.to_csv(os.path.join(args.result_folder, f"{args.prefix}_summary_{tag}.csv"), index=False)
