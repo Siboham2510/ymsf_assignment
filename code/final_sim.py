@@ -28,23 +28,33 @@ class RelZParams:
     entry: float      # e.g., 1.5   (enter when |z| >= entry)
     tp_off: float     # e.g., 0.5   TP offset (relative to entry)
     stop_off: float   # e.g., 2.0   SL offset (relative to entry)
+def last_thursday(year: int, month: int) -> pd.Timestamp:
+    """
+    Compute the last Thursday of a given year-month.
+    """
+    # Start from last day of month
+    dt = pd.Timestamp(year=year, month=month, day=1) + pd.offsets.MonthEnd(0)
+
+    # Move backwards to Thursday
+    while dt.weekday() != 3:   # Monday=0 ... Thursday=3
+        dt -= pd.Timedelta(days=1)
+    return dt
+
 
 def days_to_expiry(trade_ts: pd.Timestamp, fut_name: str) -> int:
     """
-    Calculate number of days to expiry for a given trade timestamp and FUT1 name.
-
-    expiry_date = last **calendar** day of that month.
+    Correct days-to-expiry based on the *last Thursday* of the
+    FUT1 contract's expiry month.
     """
     underlying, year, month = parse_future_name(fut_name)
-    if (year is None) or (month is None) or pd.isna(trade_ts):
-        # Fallback: neutral zone
-        return 30
 
-    expiry_date = (
-        pd.Timestamp(year=int(year), month=int(month), day=1)
-        + pd.offsets.MonthEnd(0)
-    )
+    if (year is None) or (month is None) or pd.isna(trade_ts):
+        return 30   # fallback
+
+    expiry_date = last_thursday(year, month)
+
     return int((expiry_date.normalize() - trade_ts.normalize()).days)
+
 
 def adjust_thresholds(days_to_expiry: int) -> tuple[float, float, float]:
     if days_to_expiry <= 5:
@@ -405,7 +415,7 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
 
         # --- new: do not trade for the first 30 days from first tick of this underlying
         start_trade_ts = g['timestamp'].min() + pd.Timedelta(days=NO_TRADE_WARMUP_DAYS)
-        start_time = pd.Timestamp('09:20').time()
+        start_time = pd.Timestamp('09:30').time()
         end_time = pd.Timestamp('15:20').time()
 
         lots = 0
