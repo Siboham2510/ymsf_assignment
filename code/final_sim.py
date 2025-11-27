@@ -651,7 +651,7 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
             equity = realized + unrealized
 
 
-            rows.append({
+            rows.append ({
                 'timestamp': ts, 'date': row['date'], 'UNDERLYING': under,
                 'lots': int(lots), 'shares_per_lot': int(shares_per_lot),
                 'FUT1': row['name_FUT1'], 'FUT2': row['name_FUT2'],
@@ -668,7 +668,7 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
                 'spr_slpg_pnl1': spr_slpg_pnl1,
                 'spr_slpg_pnl2': spr_slpg_pnl2,
                 'own_amount': own_amount,
-                'ttq_FUT2': row.get('ttq_FUT2', np.nan)  # cumulative contracts at this ts
+                'ttq_FUT2': row.get('ttq_FUT2', np.nan), # cumulative contracts at this ts
                 'entry_E': entry_E,
                 'tp_off': tp_off,
                 'stop_off': stop_off,
@@ -912,7 +912,7 @@ if __name__ == "__main__":
     print(tdiff, "uni done")
 
     # Dummy zparams (we don't use these, actual values are dynamic per row) Keeping this in order to not have to change function signature
-    zp = RelZParams(entry=1.5, tp_off=0.5, stop_off=1.5)
+    zp = RelZParams(entry=1.5, tp_off=0.5, stop_off=1.5) #we override these for every timestamp
     groups = [(under, g) for under, g in uni.groupby('underlying')]
 
     results = []
@@ -927,7 +927,12 @@ if __name__ == "__main__":
         summary= pd.concat([r[1] for r in results if r is not None and len(r) >= 2], ignore_index=True)
         trades = pd.concat([r[2] for r in results if r is not None and len(r) >= 3], ignore_index=True)
         summary = summary.sort_values('final_net_pnl', ascending=False)
-
+        market_total = summary["total_contracts_traded"].sum()
+        if market_total > 0:
+            summary["market_perc"] = (summary["total_contracts_traded"] / market_total)*100.0
+        else:
+            summary["market_perc"] = 0.0
+   
         # --- add TOTAL row ---
         total_row = {
             'UNDERLYING': 'TOTAL',
@@ -936,17 +941,18 @@ if __name__ == "__main__":
             'final_realized': summary['final_realized'].sum(),
             'final_unrealized': summary['final_unrealized'].sum(),
             'final_equity': summary['final_equity'].sum(),
-            'final_gross_pnl': summary['final_gross_pnl'].sum(),
-            'final_net_pnl': summary['final_net_pnl'].sum(),
-            'final_cost_pnl': summary['final_cost_pnl'].sum(),
-            'final_spr_slpg1': summary['final_spr_slpg1'].sum(),
-            'final_spr_slpg2': summary['final_spr_slpg2'].sum(),
+            'gross_pnl': summary['final_gross_pnl'].sum(),
+            'net_pnl': summary['final_net_pnl'].sum(),
+            'cost_pnl': summary['final_cost_pnl'].sum(),
+            'slippage_fut1': summary['final_spr_slpg1'].sum(),
+            'slippage_fut2': summary['final_spr_slpg2'].sum(),
             'final_own_amount': summary['final_own_amount'].sum(),
             'max_drawdown': summary['max_drawdown'].max(),
             'total_contracts_traded': summary['total_contracts_traded'].sum(),
             'total_shares_traded': summary['total_shares_traded'].sum(),
-            'max_delta_lots': summary['max_delta_lots'].max(),
-            'min_delta_lots': summary['min_delta_lots'].min()
+            'max_delta_qty': summary['max_delta_lots'].max(),
+            'min_delta_lots': summary['min_delta_lots'].min(),
+            'market_perc': 100.0
         }
         summary = pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
 
