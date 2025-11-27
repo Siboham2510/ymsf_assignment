@@ -1,5 +1,3 @@
-#!/user/mayank/projects/alphabench/venv/bin/python
-
 import pandas as pd
 import numpy as np
 import re
@@ -30,6 +28,30 @@ class RelZParams:
     entry: float      # e.g., 1.5   (enter when |z| >= entry)
     tp_off: float     # e.g., 0.5   (exit if moves in favour by >= tp_off from entry)
     stop_off: float   # e.g., 2.0   (exit if moves against by >= stop_off from entry)
+
+def adjust_thresholds(days_to_expiry: int) -> tuple[float, float, float]:
+    base_entry = 2.0
+    base_tp    = 1.0
+    base_sl    = 1.5
+
+    if days_to_expiry <= 5:
+        entry_E  = base_entry - 0.26
+        tp_off   = base_tp - 0.25
+        stop_off = base_sl - 0.25
+    elif days_to_expiry <= 15:
+        entry_E  = base_entry - 0.15
+        tp_off   = base_tp - 0.15
+        stop_off = base_sl - 0.15
+    elif days_to_expiry <= 30:
+        entry_E  = base_entry
+        tp_off   = base_tp
+        stop_off = base_sl
+    else:
+        entry_E  = base_entry + 0.25
+        tp_off   = base_tp + 0.25
+        stop_off = base_sl + 0.25
+
+    return entry_E, tp_off, stop_off
 
 def decide_delta_relative(z: float, zmul: float, cost: float, spread_cost: float, lots: int, ready: bool, p: RelZParams) -> int:
     """
@@ -400,6 +422,7 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
             s1   = row['spread_FUT1']
             f2   = row['mid_FUT2']
             s2   = row['spread_FUT2']
+
             cash = row['cash_ltp']
             z    = row['z']; sma = row['sma']; sd = row['sd']
 
@@ -804,9 +827,9 @@ if __name__ == "__main__":
     import argparse, os
 
     parser = argparse.ArgumentParser(description="Mean-reversion spread sim (single zparam run).")
-    parser.add_argument("--entry", type=float, required=True, help="Entry z threshold E (e.g., 1.5)")
-    parser.add_argument("--tp_off", type=float, required=True, help="TP offset from entry (e.g., 0.5)")
-    parser.add_argument("--stop_off", type=float, required=True, help="STOP offset from entry (e.g., 2.0)")
+    # parser.add_argument("--entry", type=float, required=True, help="Entry z threshold E (e.g., 1.5)")
+    # parser.add_argument("--tp_off", type=float, required=True, help="TP offset from entry (e.g., 0.5)")
+    # parser.add_argument("--stop_off", type=float, required=True, help="STOP offset from entry (e.g., 2.0)")
     parser.add_argument("--data_folder", type=str, required=True, help="Path to input CSV folder")
     parser.add_argument("--result_folder", type=str, required=True, help="Folder to write result CSVs")
     # Optional knobs (keep defaults from your script):
