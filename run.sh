@@ -1,21 +1,35 @@
 #!/bin/bash
 set -e
 
-# Timestamp for output file
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTFILE="./output/results_$TIMESTAMP.csv"
 
 echo "Running YMS simulation..."
 
-python code/final_sim.py --data_folder ./data/customdata_new --result_folder ./output
+python code/final_sim.py \
+    --data_folder ./data/customdata_new \
+    --result_folder ./output \
+    --prefix mr_spread_dynamic
 
 echo "Combining results..."
+
 python3 code/combine_results.py \
     --result_folder ./output \
-    --prefix mr_spread_rel
+    --prefix mr_spread_dynamic
 
-# Rename final file to include timestamp
-mv ./output/mr_spread_rel_leaderboard_overall.csv $OUTFILE
+mv ./output/mr_spread_dynamic_leaderboard_overall.csv $OUTFILE
 
 echo "Done!"
 echo "Final output saved as $OUTFILE"
+
+###############################################
+# MINIMAL VERSION (REFERENCE ONLY)
+# This version just runs final_sim.py and writes
+# results.csv inside ./output/
+#
+# python code/final_sim.py \
+#     --data_folder ./data/customdata_new \
+#     --result_folder ./output
+#
+# echo "Done!"
+###############################################
