@@ -26,30 +26,39 @@ from itertools import product
 @dataclass(frozen=True)
 class RelZParams:
     entry: float      # e.g., 1.5   (enter when |z| >= entry)
-    tp_off: float     # e.g., 0.5   (exit if moves in favour by >= tp_off from entry)
-    stop_off: float   # e.g., 2.0   (exit if moves against by >= stop_off from entry)
+    tp_off: float     # e.g., 0.5   TP offset (relative to entry)
+    stop_off: float   # e.g., 2.0   SL offset (relative to entry)
+
+def days_to_expiry(trade_ts: pd.Timestamp, fut_name: str) -> int:
+    """
+    Calculate number of days to expiry for a given trade timestamp and FUT1 name.
+
+    expiry_date = last **calendar** day of that month.
+    """
+    underlying, year, month = parse_future_name(fut_name)
+    if (year is None) or (month is None) or pd.isna(trade_ts):
+        # Fallback: neutral zone
+        return 30
+
+    expiry_date = (
+        pd.Timestamp(year=int(year), month=int(month), day=1)
+        + pd.offsets.MonthEnd(0)
+    )
+    return int((expiry_date.normalize() - trade_ts.normalize()).days)
 
 def adjust_thresholds(days_to_expiry: int) -> tuple[float, float, float]:
-    base_entry = 2.0
-    base_tp    = 1.0
-    base_sl    = 1.5
-
     if days_to_expiry <= 5:
-        entry_E  = base_entry - 0.26
-        tp_off   = base_tp - 0.25
-        stop_off = base_sl - 0.25
+        entry_E  = 1.25
+        tp_off   = 0.25
+        stop_off = 1.25
     elif days_to_expiry <= 15:
-        entry_E  = base_entry - 0.15
-        tp_off   = base_tp - 0.15
-        stop_off = base_sl - 0.15
-    elif days_to_expiry <= 30:
-        entry_E  = base_entry
-        tp_off   = base_tp
-        stop_off = base_sl
-    else:
-        entry_E  = base_entry + 0.25
-        tp_off   = base_tp + 0.25
-        stop_off = base_sl + 0.25
+        entry_E  = 1.5
+        tp_off   = 0.5
+        stop_off = 1.5
+    else :
+        entry_E  = 1.75
+        tp_off   = 0.75
+        stop_off = 1.75
 
     return entry_E, tp_off, stop_off
 
@@ -422,6 +431,12 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
             s1   = row['spread_FUT1']
             f2   = row['mid_FUT2']
             s2   = row['spread_FUT2']
+                # compute days to expiry for FUT1
+            exp_year = row['exp_year_FUT1']
+            exp_month = row['exp_month_FUT1']
+            # assume last calendar day of expiry month as expiry (simple + OK for NIFTY/BANKNIFTY)
+            expiry_date = pd.Timestamp(year=exp_year, month=exp_month, day=28) + pd.offsets.MonthEnd(0)
+            days_to_expiry = (expiry_date - ts.normalize()).days
 
             cash = row['cash_ltp']
             z    = row['z']; sma = row['sma']; sd = row['sd']
@@ -537,7 +552,19 @@ def simulate_mean_reversion(group: (str, pd.DataFrame),
                 continue
 
             spread_cost = abs(s1/2 + s2/2) * shares_per_lot
-            delta, tag = decide_delta_relative(z, zmul, cost * lot_notional * 2, spread_cost, lots, ready, zparams)
+            # delta, tag = decide_delta_relative(z, zmul, cost * lot_notional * 2, spread_cost, lots, ready, zparams)
+                # dynamic z-parameters based on expiry proximity
+            entry_E, tp_dyn, sl_dyn = adjust_thresholds(days_to_expiry)
+            zparams_dyn = RelZParams(entry=entry_E, tp_off=tp_dyn, stop_off=sl_dyn)
+
+            delta, tag = decide_delta_relative(
+            z, zmul,
+            cost * lot_notional * 2,
+            spread_cost,
+            lots,
+            ready,
+            zparams_dyn
+            )
 
 
             # Throttle and bounds
@@ -867,7 +894,7 @@ if __name__ == "__main__":
     print(tdiff, "uni done")
 
     # === Sim run for this single zparam config ===
-    zp = RelZParams(entry=args.entry, tp_off=args.tp_off, stop_off=args.stop_off)
+    # zp = RelZParams(entry=args.entry, tp_off=args.tp_off, stop_off=args.stop_off)
 
     groups = [(under, g) for under, g in uni.groupby('underlying')]
 
